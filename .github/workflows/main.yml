@@ -9,31 +9,261 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle (without faulty cache)
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.4'
-          cache-disabled: true
-
-      - name: Fix Manifest Icon References
+      - name: Generate Project Files & Build APK
         run: |
-          sed -i '/android:icon=/d' app/src/main/AndroidManifest.xml
-          sed -i '/android:roundIcon=/d' app/src/main/AndroidManifest.xml
+          rm -rf build_project
+          mkdir -p build_project/app/src/main/java/cz/neratovice/meteo
+          mkdir -p build_project/app/src/main/res/layout
+          mkdir -p build_project/app/src/main/res/values
+          cd build_project
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Meteo Neratovice"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "cz.neratovice.meteo"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "cz.neratovice.meteo"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_1_8
+                  targetCompatibility = JavaVersion.VERSION_1_8
+              }
+              kotlinOptions {
+                  jvmTarget = "1.8"
+              }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.appcompat:appcompat:1.6.1")
+              implementation("com.google.android.material:material:1.11.0")
+              implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <application
+                  android:allowBackup="true"
+                  android:label="Meteo Neratovice"
+                  android:supportsRtl="true"
+                  android:usesCleartextTraffic="true"
+                  android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:configChanges="orientation|screenSize|keyboardHidden"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">Meteo Neratovice</string>
+          </resources>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="#060911">
+              <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+                  android:id="@+id/swipeRefresh"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent">
+                  <WebView
+                      android:id="@+id/webView"
+                      android:layout_width="match_parent"
+                      android:layout_height="match_parent"
+                      android:background="#060911" />
+              </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+              <LinearLayout
+                  android:id="@+id/errorLayout"
+                  android:layout_width="match_parent"
+                  android:layout_height="match_parent"
+                  android:background="#060911"
+                  android:gravity="center"
+                  android:orientation="vertical"
+                  android:padding="24dp"
+                  android:visibility="gone">
+                  <TextView
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="Žádné připojení k internetu"
+                      android:textColor="#F8FAFC"
+                      android:textSize="18sp"
+                      android:textStyle="bold" />
+                  <Button
+                      android:id="@+id/retryButton"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:layout_marginTop="20dp"
+                      android:backgroundTint="#38BDF8"
+                      android:text="Zkusit znovu"
+                      android:textColor="#060911"
+                      android:textStyle="bold" />
+              </LinearLayout>
+          </FrameLayout>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/cz/neratovice/meteo/MainActivity.kt
+          package cz.neratovice.meteo
+
+          import android.annotation.SuppressLint
+          import android.content.Intent
+          import android.graphics.Color
+          import android.net.Uri
+          import android.os.Bundle
+          import android.view.View
+          import android.webkit.*
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import androidx.activity.OnBackPressedCallback
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+
+          class MainActivity : AppCompatActivity() {
+              private lateinit var webView: WebView
+              private lateinit var swipeRefresh: SwipeRefreshLayout
+              private lateinit var errorLayout: LinearLayout
+              private lateinit var retryButton: Button
+              private val WEB_URL = "https://www.bb41.cz/meteo/"
+
+              @SuppressLint("SetJavaScriptEnabled")
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  window.statusBarColor = Color.parseColor("#060911")
+                  window.navigationBarColor = Color.parseColor("#060911")
+
+                  webView = findViewById(R.id.webView)
+                  swipeRefresh = findViewById(R.id.swipeRefresh)
+                  errorLayout = findViewById(R.id.errorLayout)
+                  retryButton = findViewById(R.id.retryButton)
+
+                  swipeRefresh.setColorSchemeColors(Color.parseColor("#38BDF8"))
+                  swipeRefresh.setProgressBackgroundColorSchemeColor(Color.parseColor("#0F1626"))
+
+                  webView.setBackgroundColor(Color.parseColor("#060911"))
+                  webView.settings.apply {
+                      javaScriptEnabled = true
+                      domStorageEnabled = true
+                      loadWithOverviewMode = true
+                      useWideViewPort = true
+                      cacheMode = WebSettings.LOAD_DEFAULT
+                      mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                  }
+
+                  webView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                      swipeRefresh.isEnabled = (scrollY == 0)
+                  }
+
+                  swipeRefresh.setOnRefreshListener { webView.reload() }
+
+                  retryButton.setOnClickListener {
+                      errorLayout.visibility = View.GONE
+                      swipeRefresh.isRefreshing = true
+                      webView.loadUrl(WEB_URL)
+                  }
+
+                  webView.webViewClient = object : WebViewClient() {
+                      override fun onPageFinished(view: WebView?, url: String?) {
+                          super.onPageFinished(view, url)
+                          swipeRefresh.isRefreshing = false
+                      }
+                      override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                          super.onReceivedError(view, request, error)
+                          if (request?.isForMainFrame == true) {
+                              swipeRefresh.isRefreshing = false
+                              errorLayout.visibility = View.VISIBLE
+                          }
+                      }
+                      override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                          val url = request?.url.toString()
+                          val isMeteoPage = url.contains("bb41.cz/meteo") || url.contains("radar.bourky.cz")
+                          return if (!isMeteoPage && (url.contains("bb41.cz") || url.contains("chmi.cz"))) {
+                              startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                              true
+                          } else {
+                              false
+                          }
+                      }
+                  }
+
+                  onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+                      override fun handleOnBackPressed() {
+                          if (webView.canGoBack()) webView.goBack() else finish()
+                      }
+                  })
+
+                  swipeRefresh.isRefreshing = true
+                  webView.loadUrl(WEB_URL)
+              }
+          }
+          EOF
+
+          wget -q https://services.gradle.org/distributions/gradle-8.4-bin.zip
+          unzip -q gradle-8.4-bin.zip
+          ./gradle-8.4/bin/gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Meteo-Neratovice-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: build_project/app/build/outputs/apk/debug/app-debug.apk
